@@ -23,13 +23,13 @@ class OptStructure:
     """
     def __init__(self, dataMatIn, classLabels, C, toler):
         self.dataMatrix = np.mat(dataMatIn)
-        self.labelMat = classLabels
+        self.labelMat = np.mat(classLabels).transpose()
         self.C = C
         self.tol = toler
         self.m, self.n = np.shape(self.dataMatrix)
-        self.alphas = np.mat(np.zeros((self.m,1)))
+        self.alphas = np.mat(np.zeros((self.m, 1)))
         self.b = 0
-        self.eCache = np.mat(np.zeros((self.m,2)))
+        self.eCache = np.mat(np.zeros((self.m, 2)))
 
 
 def calcEk(oS, k):
@@ -124,12 +124,12 @@ def innerloop(i, oS):
             (oS.labelMat[i] * Ei > oS.tol and oS.alphas[i] > 0):
         # 选取第二个alpha
         j, Ej = selectJ(oS, i, Ei)
-        alphaIold = alphas[i].copy()
-        alphaJold = alphas[j].copy()
+        alphaIold = oS.alphas[i].copy()
+        alphaJold = oS.alphas[j].copy()
         # 计算上下边界限制
         if oS.labelMat[i] != oS.labelMat[j]:
             L = max(0, oS.alphas[j] - oS.alphas[i])
-            H = min(oS.C, oS.C + oS.alphas[j] - alphas[i])
+            H = min(oS.C, oS.C + oS.alphas[j] - oS.alphas[i])
         else:
             L = max(0, oS.alphas[j] + oS.alphas[i] - oS.C)
             H = min(oS.C, oS.alphas[j] + oS.alphas[i])
@@ -155,20 +155,20 @@ def innerloop(i, oS):
              oS.labelMat[j] * (oS.alphas[j] - alphaJold) * oS.dataMatrix[j, :] * oS.dataMatrix[i, :].T
         b2 = oS.b - Ej - oS.labelMat[i] * (oS.alphas[i] - alphaIold) * oS.dataMatrix[i, :] * oS.dataMatrix[j, :].T - \
              oS.labelMat[j] * (oS.alphas[j] - alphaJold) * oS.dataMatrix[j, :] * oS.dataMatrix[j, :].T
-        if 0 < oS.alphas[i] < C:
+        if 0 < oS.alphas[i] < oS.C:
             oS.b = b1
-        elif 0 < oS.alphas[j] < C:
+        elif 0 < oS.alphas[j] < oS.C:
             oS.b = b2
         else:
             oS.b = (b1 + b2) / 2.
         return 1
-    return 0
+    else:
+        return 0
 
 
-
-def smoPlatt(dataMatIn, classLabels, C, toler, maxIter):
+def smoplatt(dataMatIn, classLabels, C, toler, maxIter, kTup=('lin', 0)):
     """
-    SMO函数，返回alpha和b，alpha[i]>0,对应支持向量
+    SMO函数(外循环)，返回alpha和b，alpha[i]>0,对应支持向量
     :param dataMatIn:
     :param classLabels:
     :param C:
@@ -176,10 +176,36 @@ def smoPlatt(dataMatIn, classLabels, C, toler, maxIter):
     :param maxIter:
     :return: alpha和b,构成决策函数
     """
+    oS = OptStructure(dataMatIn, classLabels, C, toler)
+    iter = 0
+    entireSet = True; alphaPairChanged = 0
+    while iter < maxIter and (alphaPairChanged > 0 or entireSet):
+        alphaPairChanged = 0
+        #如果上一次没有alpha值变化，则遍历所有样本，进行优化
+        if entireSet:
+            for i in range(oS.m):
+                alphaPairChanged += innerloop(i, oS)
+                print("full set, iter: %d, i: %d, pairs changed: %d" % (iter, i, alphaPairChanged))
+            iter += 1
+        #如果上一轮遍历确定支持向量，则只对支持变量（0<alpha<C）进行优化
+        else:
+            nonBound = np.nonzero((oS.alphas.A > 0) * (oS.alphas.A <C))[0]  #取出所有满足条件的非零值的i列表
+            for i in nonBound:
+                alphaPairChanged += innerloop(i, oS)
+                print("Non Bound, iter: %d, i: %d, pairs changed: %d" % (iter, i, alphaPairChanged))
+            iter += 1
+        if entireSet:
+            entireSet = False
+        elif alphaPairChanged == 0:
+            entireSet = True
+        print('iterations number: %d' % iter)
+        w = np.mat(np.zeros((oS.n, 1)))
+        for i in range(oS.m):
+            w += np.multiply(oS.alphas[i] * oS.labelMat[i], oS.dataMatrix[i,:].T)
+    return w, oS.b, oS.alphas
 
 
 if __name__ == '__main__':
     dataArr, labelArr = loadDataSet('testSet.txt')
-    b, alphas = smosimple(dataArr, labelArr, 0.6, 0.001, 40)
-    print(b)
-    print(alphas)
+    w, b, alphas = smoplatt(dataArr, labelArr, 0.6, 0.001, 40)
+    print(dataArr[11] * w + b, labelArr[11])
